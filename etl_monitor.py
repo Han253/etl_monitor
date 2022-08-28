@@ -73,14 +73,17 @@ class ETLMonitor():
     #Define transformation data process
     def transformation(self,data):
         self.get_last_data()
+
+        data_response = {}
+        data_response["CREATE"] = {"devices":[]}
+        data_response["UPDATE"] = {"devices":[]}
+        data_response["DELETE"] = {"devices":[]}
         
         #firt time to save representation
         if self.last_data == {}:
             with open(self.file_data_name, 'w') as f:
                 json.dump(data, f)
-                print("json file was update")                                    
-            data_response = {}
-            data_response["CREATE"] = {"devices":[]}
+                print("json file was update")
             if data!= None:
                 devices_list = data.pop("devices",None)
                 data_response["CREATE"]["devices"].append(data)
@@ -90,11 +93,7 @@ class ETLMonitor():
         
         #Compare last representation with the new
         else:
-            send_response = False
-            data_response = {}
-            data_response["CREATE"] = {"devices":[]}
-            data_response["UPDATE"] = {"devices":[]}
-            data_response["DELETE"] = {"devices":[]}
+            send_response = False            
             data_response["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             last_devices_list = self.get_devices_list(self.last_data["devices"],[])
