@@ -10,12 +10,12 @@ from random import random
 
 class ETLMonitor():
 
-    def __init__(self,file_data_name='last_status.json',amqp_host='localhost',queue='representation',interval=10):
+    def __init__(self,file_data_name='last_status.json',amqp_host='localhost',queue='representation',interval=5):
         self.file_data_name = file_data_name
         self.amqp_host = amqp_host
         self.queue = queue
         self.interval = interval
-        self.DATA_URL = "http://localhost:5000/device/api/1"
+        self.DATA_URL = "http://localhost:5000/gateway/api/representation/"
         self.last_data = None
 
     def init_data_file(self):
@@ -39,7 +39,7 @@ class ETLMonitor():
             time.sleep(self.interval)
     
     def set_devices(self,list,devices,device_parent):
-        if len(devices)!=0:
+        if devices!= None and len(devices)!=0:
             for device in devices:
                 devices_list = device.pop("devices",None)
                 device["device_parent"] = device_parent
@@ -54,30 +54,42 @@ class ETLMonitor():
         channel.basic_publish(exchange='', routing_key='representation', body=message)
         print(" [X] Send data -- %s" % message)
         connection.close()
+    
+    #Get devices List
+    def get_devices_list(self,input_device=None,input_list=[]):
+        output_list=[]       
+        #Gateway devices
+        if input_device!=None:
+            i_device = input_device.copy()
+            device_list = i_device.pop("devices",None)
+            output_list.append(i_device)
+        else:
+            device_list = input_list
+        for device in device_list:
+            i_device = device.copy()
+            sub_devices_list = i_device.pop("devices",None)
+            output_list.append(i_device)
+            if sub_devices_list!=None and len(sub_devices_list) !=0:
+                output_sub_list = self.get_devices_list(input_device=None,input_list=sub_devices_list)        
+                output_list = output_list+output_sub_list
+        return output_list
+    
 
     #Define extract data process
     def extract_data(self):
         data_rq = requests.get(self.DATA_URL)
         data_dict= json.loads(data_rq.text)        
         return data_dict
-    
-    #Get devices List
-    def get_devices_list(self,input_list,output_list=[]):
-        for device in input_list:
-            sub_devices_list = device.pop("devices",None)
-            output_list.append(device)
-            if sub_devices_list!=None and len(sub_devices_list) !=0:
-                output_list = self.get_devices_list(sub_devices_list,output_list)        
-        return output_list
-    
+        
     #Define transformation data process
     def transformation(self,data):
         self.get_last_data()
+        new_data = data.copy()
 
         data_response = {}
-        data_response["CREATE"] = {"devices":[]}
-        data_response["UPDATE"] = {"devices":[]}
-        data_response["DELETE"] = {"devices":[]}
+        data_response["CREATE"] = {"devices":[],"resources":[],"apps":[]}
+        data_response["UPDATE"] = {"devices":[],"resources":[],"apps":[]}
+        data_response["DELETE"] = {"devices":[],"resources":[],"apps":[]}
         
         #firt time to save representation
         if self.last_data == {}:
@@ -85,20 +97,58 @@ class ETLMonitor():
                 json.dump(data, f)
                 print("json file was update")
             if data!= None:
-                devices_list = data.pop("devices",None)
-                data_response["CREATE"]["devices"].append(data)
                 data_response["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.set_devices(data_response["CREATE"]["devices"],devices_list,data["global_id"])
+                device_data = data["device"]
+                apps_data = data["apps"]
+                resources_data = data["resources"]
+
+                #Resources
+                for resource in resources_data:
+                    data_response["CREATE"]["resources"].append(resource)
+
+                #Devices
+                devices_list = device_data.pop("devices",None)
+                data_response["CREATE"]["devices"].append(device_data)                
+                self.set_devices(data_response["CREATE"]["devices"],devices_list,device_data["global_id"])
+                
+                #Applications
+                for app in apps_data:
+                    data_response["CREATE"]["apps"].append(app)               
                 j_response = json.dumps(data_response)
         
         #Compare last representation with the new
         else:
-            send_response = False            
-            data_response["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            send_response = False     
             
-            last_devices_list = self.get_devices_list(self.last_data["devices"],[])
-            last_devices_list_id = [x["global_id"] for x in last_devices_list]           
-            new_devices_list = self.get_devices_list(data["devices"],[])
+            #Resources
+            last_resources_list = self.last_data["resources"]
+            last_resources_list_id = [x["global_id"] for x in last_resources_list]
+            new_resources_list = data["resources"]
+            for resource in new_resources_list:
+                if resource["global_id"] in last_resources_list_id:
+                    index = last_resources_list_id.index(resource["global_id"])
+                    last_resource = last_resources_list[index]
+                    if resource != last_resource:
+                        #Old resources with changes
+                        send_response = True
+                        data_response["UPDATE"]["resources"].append(resource)
+
+                    last_resources_list.remove(last_resource)
+                    last_resources_list_id.pop(index)
+                else:
+                    #new resource
+                    send_response = True
+                    data_response["CREATE"]["resources"].append(resource)
+
+            if len(last_resources_list)>0:
+                send_response = True
+                for del_resource in last_resources_list:
+                    data_response["DELETE"]["resources"].append(del_resource)  
+
+            #Devices
+            last_devices_list = self.get_devices_list(input_device=self.last_data["device"])            
+            last_devices_list_id = [x["global_id"] for x in last_devices_list]
+            new_devices_list = self.get_devices_list(input_device=new_data["device"])            
             for device in new_devices_list:
                 #Old Devices
                 if device["global_id"] in last_devices_list_id:
@@ -106,7 +156,7 @@ class ETLMonitor():
                     last_device = last_devices_list[index]
                     if device != last_device:
                         #Old devices with changes
-                        device.pop("devices",None)
+                        #device.pop("devices",None)--DELETE
                         send_response = True
                         data_response["UPDATE"]["devices"].append(device)
 
@@ -116,18 +166,43 @@ class ETLMonitor():
                 else:
                     #new device
                     send_response = True
-                    data_response["DELETE"]["devices"].append(device)                
+                    data_response["CREATE"]["devices"].append(device)                
             
             if len(last_devices_list)>0:
                 send_response = True
                 for del_device in last_devices_list:
-                    data_response["DELETE"]["devices"].append(del_device) 
+                    data_response["DELETE"]["devices"].append(del_device)
 
+            #Applications
+            last_apps_list = self.last_data["apps"]
+            last_apps_list_id = [x["global_id"] for x in last_apps_list]
+            new_apps_list = data["apps"]
+            for app in new_apps_list:
+                if app["global_id"] in last_apps_list_id:
+                    index = last_apps_list_id.index(app["global_id"])
+                    last_app = last_apps_list[index]
+                    if app != last_app:
+                        #Old apps with changes
+                        send_response = True
+                        data_response["UPDATE"]["apps"].append(app)
+
+                    last_apps_list.remove(last_app)
+                    last_apps_list_id.pop(index)
+                else:
+                    #new app
+                    send_response = True
+                    data_response["CREATE"]["apps"].append(app)
+
+            if len(last_apps_list)>0:
+                send_response = True
+                for del_app in last_apps_list:
+                    data_response["DELETE"]["apps"].append(del_app)
 
             if send_response:
-                with open(self.file_data_name, 'w') as f:
+                with open(self.file_data_name, 'w') as f:                    
                     json.dump(data, f)
                     print("json file was update")
+                data_response["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 j_response = json.dumps(data_response)
             else:
                 j_response = None
@@ -142,9 +217,12 @@ class ETLMonitor():
 
     #Define ETL Monitor.
     def etl_monitor(self):
-        data = self.extract_data()
+        start_time = time.time()
+        data = self.extract_data()        
         data = self.transformation(data)
         self.load(data)
+        end_time = time.time()
+        print("---%s seconds ---" % (end_time-start_time))
 
 
 #Main Task
@@ -163,5 +241,3 @@ if __name__ == '__main__':
             sys.exit(0)
         except SystemExit:
             os._exit(0)
-
-
