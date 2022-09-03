@@ -1,36 +1,63 @@
+"""
+SDA (Self Description Adaptare)
+
+Modulo para monitorear y reportar cambios en la infraestructura software, se encarga de recibir
+los cambios en el dispositivo monitoreado y generar una novedad con el detalle para su procesamiento
+
+Autor: Henry Jiménez
+Version: 1.0
+
+"""
+
 #Import Libraries
 import schedule
 import time, sys, os
 import pika
 from datetime import datetime
 import json
-import requests
+from tinydb import TinyDB
+from redisTool import RedisQueue
+import typer
+import logging
 
 from random import random
 
-class ETLMonitor():
+#Typer App CLI Helper
+app = typer.Typer()
+
+#Log File
+logger = logging.getLogger('sda_monitor')
+logger.setLevel(logging.DEBUG)
+# create file handler which logs even debug messages
+fh = logging.FileHandler('register.log')
+fh.setLevel(logging.DEBUG)
+logger.addHandler(fh)
+
+#Self-Description Adapter
+class SDA():
+
+    ITEMS_TYPES = ["property","resource","device","app"]
+    QUEUE_TYPES = ["create","update","delete"]
 
     def __init__(self,file_data_name='last_status.json',amqp_host='localhost',queue='representation',interval=5):
         self.file_data_name = file_data_name
         self.amqp_host = amqp_host
         self.queue = queue
         self.interval = interval
-        self.DATA_URL = "http://localhost:5000/gateway/api/representation/"
-        self.last_data = None
-
-    def init_data_file(self):
-         #Validate temporal data
-        if not os.path.exists(self.file_data_name):
-            with open(self.file_data_name,'w') as f:
-                json.dump({}, f)
+        self.db = TinyDB('db.json')
+        self.create_queue = RedisQueue("create")
+        self.update_queue = RedisQueue("update")
+        self.delete_queue = RedisQueue("delete")
+        
+     
     
     def get_last_data(self):
         with open(self.file_data_name) as f:
             self.last_data = json.load(f)
     
-    def init_ETL_loop(self):
+    def init_SDA_loop(self):
         #Programing task
-        schedule.every(self.interval).seconds.do(self.etl_monitor)
+        schedule.every(self.interval).seconds.do(self.sda_monitor)
         print(' [*] Start sending messages. To exit press CTRL+C')
         #Principal bucle
         while True:
@@ -77,20 +104,68 @@ class ETLMonitor():
 
     #Define extract data process
     def extract_data(self):
-        data_rq = requests.get(self.DATA_URL)
-        data_dict= json.loads(data_rq.text)        
-        return data_dict
+        #Get notifications
+        data_to_transform = {}
+        data_to_transform["create"] = []
+        data_to_transform["update"] = []
+        data_to_transform["delete"] = []
+
+        while not self.create_queue.empty():
+            data_to_transform["create"].append(json.loads(self.create_queue.get().decode('UTF-8')))
+        
+        while not self.create_queue.empty():
+            data_to_transform["update"].append(json.loads(self.update_queue.get().decode('UTF-8')))
+
+        while not self.create_queue.empty():
+            data_to_transform["delete"].append(json.loads(self.delete_queue.get().decode('UTF-8')))
+        
+                
+        return data_to_transform
         
     #Define transformation data process
     def transformation(self,data):
-        self.get_last_data()
-        new_data = data.copy()
 
         data_response = {}
-        data_response["CREATE"] = {"devices":[],"resources":[],"apps":[]}
-        data_response["UPDATE"] = {"devices":[],"resources":[],"apps":[]}
-        data_response["DELETE"] = {"devices":[],"resources":[],"apps":[]}
+        send_response = False
+
+        #Create data response structure
+        for queue in self.QUEUE_TYPES:
+            data_response[queue] = {}
+            for item in self.ITEMS_TYPES:
+                data_response[queue][item] = []
         
+        #Get data response
+        for queue in self.QUEUE_TYPES:
+            for item in data[queue]:
+                for i_type in self.ITEMS_TYPES:
+                    if item["type"] == i_type:
+                        send_response = True
+                        data_response[queue][i_type].append(item["content"])
+                        time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        str_log = "" + queue.upper()
+                        str_log += " " + i_type.upper()
+                        if "global_id" in item["content"]:
+                            str_log += " G_ID:"+str(item["content"]["global_id"])
+                        elif "device_id" in item["content"]:
+                            str_log += " Device_ID:"+str(item["content"]["device_id"])
+                        elif "resource_id" in item["content"]:
+                            str_log += " Resource_ID:"+str(item["content"]["resource_id"])
+                        str_log += " " + time
+                        logger.info(str_log)
+
+        if send_response:
+            data_response["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            table = self.db.table('logs')
+            table.insert(data_response)
+            json_data =  json.dumps(data_response)
+        else:
+            json_data = None
+
+        return json_data  
+
+
+       
+        """
         #firt time to save representation
         if self.last_data == {}:
             with open(self.file_data_name, 'w') as f:
@@ -207,6 +282,7 @@ class ETLMonitor():
             else:
                 j_response = None
         return j_response
+    """
 
     #Define load data process
     def load(self,data):
@@ -215,8 +291,8 @@ class ETLMonitor():
         else:
             print("[*] Not changes")
 
-    #Define ETL Monitor.
-    def etl_monitor(self):
+    #Define SDA Monitor.
+    def sda_monitor(self):
         start_time = time.time()
         data = self.extract_data()        
         data = self.transformation(data)
@@ -226,15 +302,14 @@ class ETLMonitor():
 
 
 #Main Task
-def main():
-    etl_monitor = ETLMonitor()
-    etl_monitor.init_data_file()
-    etl_monitor.init_ETL_loop()   
-    
+@app.command()
+def main(interval: int = 5):
+    adapter = SDA(interval=interval)
+    adapter.init_SDA_loop()
 
 if __name__ == '__main__':
     try:
-        main()
+        app()
     except KeyboardInterrupt:
         print('Interrupted')
         try:
