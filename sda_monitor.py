@@ -36,7 +36,7 @@ logger.addHandler(fh)
 #Self-Description Adapter
 class SDA():
 
-    ITEMS_TYPES = ["property","resource","device","app"]
+    ITEMS_TYPES = ["property","resource","device","app","device_resource","app_device"]
     QUEUE_TYPES = ["create","update","delete"]
 
     def __init__(self,file_data_name='last_status.json',amqp_host='localhost',queue='representation',interval=5):
@@ -45,10 +45,7 @@ class SDA():
         self.queue = queue
         self.interval = interval
         self.db = TinyDB('db.json')
-        self.create_queue = RedisQueue("create")
-        self.update_queue = RedisQueue("update")
-        self.delete_queue = RedisQueue("delete")
-        
+        self.create_queue = RedisQueue("register")        
      
     
     def get_last_data(self):
@@ -105,21 +102,11 @@ class SDA():
     #Define extract data process
     def extract_data(self):
         #Get notifications
-        data_to_transform = {}
-        data_to_transform["create"] = []
-        data_to_transform["update"] = []
-        data_to_transform["delete"] = []
+        data_to_transform = []
 
         while not self.create_queue.empty():
-            data_to_transform["create"].append(json.loads(self.create_queue.get().decode('UTF-8')))
-        
-        while not self.create_queue.empty():
-            data_to_transform["update"].append(json.loads(self.update_queue.get().decode('UTF-8')))
-
-        while not self.create_queue.empty():
-            data_to_transform["delete"].append(json.loads(self.delete_queue.get().decode('UTF-8')))
-        
-                
+            data_to_transform.append(json.loads(self.create_queue.get().decode('UTF-8')))
+                        
         return data_to_transform
         
     #Define transformation data process
@@ -128,30 +115,34 @@ class SDA():
         data_response = {}
         send_response = False
 
-        #Create data response structure
-        for queue in self.QUEUE_TYPES:
-            data_response[queue] = {}
-            for item in self.ITEMS_TYPES:
-                data_response[queue][item] = []
+        if len(data)>0:
+            #Create data response structure
+            for queue in self.QUEUE_TYPES:
+                data_response[queue] = {}
+                for item in self.ITEMS_TYPES:
+                    data_response[queue][item] = []
         
-        #Get data response
-        for queue in self.QUEUE_TYPES:
-            for item in data[queue]:
-                for i_type in self.ITEMS_TYPES:
-                    if item["type"] == i_type:
-                        send_response = True
-                        data_response[queue][i_type].append(item["content"])
-                        time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        str_log = "" + queue.upper()
-                        str_log += " " + i_type.upper()
-                        if "global_id" in item["content"]:
-                            str_log += " G_ID:"+str(item["content"]["global_id"])
-                        elif "device_id" in item["content"]:
-                            str_log += " Device_ID:"+str(item["content"]["device_id"])
-                        elif "resource_id" in item["content"]:
-                            str_log += " Resource_ID:"+str(item["content"]["resource_id"])
-                        str_log += " " + time
-                        logger.info(str_log)
+            #Get data response
+            for item in data:
+                send_response = True
+                data_response[item["queue"]][item["type"]].append(item["content"])
+                time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                str_log = "" + item["queue"].upper()+":"
+                str_log += " " + item["type"].upper()
+                if "global_id" in item["content"]:
+                    str_log += " G_ID:"+str(item["content"]["global_id"])
+                elif "name" in item["content"]:
+                    str_log += " NAME:"+str(item["content"]["name"])
+                    str_log += " PROP_TYPE:"+str(item["content"]["prop_type"])
+                    str_log += " PARENT_ID:"+str(item["content"]["parent_id"])
+                elif "resource_id" in item["content"]:
+                    str_log += " DEVICE:"+str(item["content"]["device_id"])
+                    str_log += " RESOURCE:"+str(item["content"]["resource_id"])
+                elif "app_id" in item["content"]:
+                    str_log += " APP:"+str(item["content"]["app_id"])
+                    str_log += " DEVICE:"+str(item["content"]["device_id"])
+                str_log += " " + time
+                logger.info(str_log)
 
         if send_response:
             data_response["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
