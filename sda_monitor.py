@@ -100,13 +100,12 @@ class SDA():
 
     #Define extract data process
     def extract_data(self):
-        #Get notifications
-        data_to_transform = []
+        #Get notifications        
 
         while not self.create_queue.empty():
-            data_to_transform.append(json.loads(self.create_queue.get().decode('UTF-8')))
-                        
-        return data_to_transform
+            notification = json.loads(self.create_queue.get().decode('UTF-8'))
+            self.transformation([notification])
+        
         
     #Define transformation data process
     def transformation(self,data):
@@ -149,128 +148,7 @@ class SDA():
         else:
             json_data = None
 
-        return json_data  
-
-
-       
-        """
-        #firt time to save representation
-        if self.last_data == {}:
-            with open(self.file_data_name, 'w') as f:
-                json.dump(data, f)
-                print("json file was update")
-            if data!= None:
-                data_response["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                device_data = data["device"]
-                apps_data = data["apps"]
-                resources_data = data["resources"]
-
-                #Resources
-                for resource in resources_data:
-                    data_response["CREATE"]["resources"].append(resource)
-
-                #Devices
-                devices_list = device_data.pop("devices",None)
-                data_response["CREATE"]["devices"].append(device_data)                
-                self.set_devices(data_response["CREATE"]["devices"],devices_list,device_data["global_id"])
-                
-                #Applications
-                for app in apps_data:
-                    data_response["CREATE"]["apps"].append(app)               
-                j_response = json.dumps(data_response)
-        
-        #Compare last representation with the new
-        else:
-            send_response = False     
-            
-            #Resources
-            last_resources_list = self.last_data["resources"]
-            last_resources_list_id = [x["global_id"] for x in last_resources_list]
-            new_resources_list = data["resources"]
-            for resource in new_resources_list:
-                if resource["global_id"] in last_resources_list_id:
-                    index = last_resources_list_id.index(resource["global_id"])
-                    last_resource = last_resources_list[index]
-                    if resource != last_resource:
-                        #Old resources with changes
-                        send_response = True
-                        data_response["UPDATE"]["resources"].append(resource)
-
-                    last_resources_list.remove(last_resource)
-                    last_resources_list_id.pop(index)
-                else:
-                    #new resource
-                    send_response = True
-                    data_response["CREATE"]["resources"].append(resource)
-
-            if len(last_resources_list)>0:
-                send_response = True
-                for del_resource in last_resources_list:
-                    data_response["DELETE"]["resources"].append(del_resource)  
-
-            #Devices
-            last_devices_list = self.get_devices_list(input_device=self.last_data["device"])            
-            last_devices_list_id = [x["global_id"] for x in last_devices_list]
-            new_devices_list = self.get_devices_list(input_device=new_data["device"])            
-            for device in new_devices_list:
-                #Old Devices
-                if device["global_id"] in last_devices_list_id:
-                    index = last_devices_list_id.index(device["global_id"])
-                    last_device = last_devices_list[index]
-                    if device != last_device:
-                        #Old devices with changes
-                        #device.pop("devices",None)--DELETE
-                        send_response = True
-                        data_response["UPDATE"]["devices"].append(device)
-
-                    last_devices_list.remove(last_device)
-                    last_devices_list_id.pop(index)
-                        
-                else:
-                    #new device
-                    send_response = True
-                    data_response["CREATE"]["devices"].append(device)                
-            
-            if len(last_devices_list)>0:
-                send_response = True
-                for del_device in last_devices_list:
-                    data_response["DELETE"]["devices"].append(del_device)
-
-            #Applications
-            last_apps_list = self.last_data["apps"]
-            last_apps_list_id = [x["global_id"] for x in last_apps_list]
-            new_apps_list = data["apps"]
-            for app in new_apps_list:
-                if app["global_id"] in last_apps_list_id:
-                    index = last_apps_list_id.index(app["global_id"])
-                    last_app = last_apps_list[index]
-                    if app != last_app:
-                        #Old apps with changes
-                        send_response = True
-                        data_response["UPDATE"]["apps"].append(app)
-
-                    last_apps_list.remove(last_app)
-                    last_apps_list_id.pop(index)
-                else:
-                    #new app
-                    send_response = True
-                    data_response["CREATE"]["apps"].append(app)
-
-            if len(last_apps_list)>0:
-                send_response = True
-                for del_app in last_apps_list:
-                    data_response["DELETE"]["apps"].append(del_app)
-
-            if send_response:
-                with open(self.file_data_name, 'w') as f:                    
-                    json.dump(data, f)
-                    print("json file was update")
-                data_response["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                j_response = json.dumps(data_response)
-            else:
-                j_response = None
-        return j_response
-    """
+        self.load(json_data)
 
     #Define load data process
     def load(self,data):
@@ -283,9 +161,9 @@ class SDA():
     #Define SDA Monitor.
     def sda_monitor(self):
         #start_time = time.time()
-        data = self.extract_data()        
-        data = self.transformation(data)
-        self.load(data)
+        self.extract_data()        
+        #data = self.transformation(data)
+        #self.load(data)
         #end_time = time.time()
         #print("---%s seconds ---" % (end_time-start_time))
 
@@ -293,7 +171,7 @@ class SDA():
 #Main Task
 @app.command()
 def main(interval: int = 5):
-    adapter = SDA(interval=interval)
+    adapter = SDA(interval=interval, amqp_host='192.168.1.105')
     adapter.init_SDA_loop()
 
 if __name__ == '__main__':
