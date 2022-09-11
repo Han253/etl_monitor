@@ -1,10 +1,13 @@
 import redis
+import os
 
 class RedisQueue(object):
     """Simple Queue with Redis Backend"""
     def __init__(self, name, namespace='queue', **redis_kwargs):
-       self.__db= redis.Redis(**redis_kwargs)
-       self.key = '%s:%s' %(namespace, name)
+        r_host = os.getenv("REDIS_HOST", default="localhost")
+        r_port = os.getenv("REDIS_PORT", default=6379)
+        self.__db= redis.Redis(host=r_host,port=r_port,**redis_kwargs)
+        self.key = '%s:%s' %(namespace, name)
 
     def qsize(self):
         """Return the approximate size of the queue."""

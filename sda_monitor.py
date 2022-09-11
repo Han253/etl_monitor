@@ -15,7 +15,6 @@ import time, sys, os
 import pika
 from datetime import datetime
 import json
-from tinydb import TinyDB
 from redisTool import RedisQueue
 import typer
 import logging
@@ -44,7 +43,6 @@ class SDA():
         self.amqp_host = amqp_host
         self.queue = queue
         self.interval = interval
-        self.db = TinyDB('db.json')
         self.create_queue = RedisQueue("register")        
      
     
@@ -72,11 +70,12 @@ class SDA():
 
     #Send AMQP Broker data
     def send_message(self,message):
-        connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+        amqp_broker_host = os.getenv("AMQP_BROKER", default='localhost')
+        connection = pika.BlockingConnection(pika.ConnectionParameters(host=amqp_broker_host))
         channel = connection.channel()
         channel.queue_declare(queue='representation')
         channel.basic_publish(exchange='', routing_key='representation', body=message)
-        print(" [X] Send data -- %s" % message)
+        #print(" [X] Send data -- %s" % message)
         connection.close()
     
     #Get devices List
@@ -146,8 +145,6 @@ class SDA():
 
         if send_response:
             data_response["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            table = self.db.table('logs')
-            table.insert(data_response)
             json_data =  json.dumps(data_response)
         else:
             json_data = None
@@ -280,16 +277,17 @@ class SDA():
         if data!= None:
             self.send_message(data)
         else:
-            print("[*] Not changes")
+            pass
+            #print("[*] Not changes")
 
     #Define SDA Monitor.
     def sda_monitor(self):
-        start_time = time.time()
+        #start_time = time.time()
         data = self.extract_data()        
         data = self.transformation(data)
         self.load(data)
-        end_time = time.time()
-        print("---%s seconds ---" % (end_time-start_time))
+        #end_time = time.time()
+        #print("---%s seconds ---" % (end_time-start_time))
 
 
 #Main Task
@@ -302,7 +300,7 @@ if __name__ == '__main__':
     try:
         app()
     except KeyboardInterrupt:
-        print('Interrupted')
+        #print('Interrupted')
         try:
             sys.exit(0)
         except SystemExit:
