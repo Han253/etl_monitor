@@ -100,13 +100,12 @@ class SDA():
 
     #Define extract data process
     def extract_data(self):
-        #Get notifications
-        data_to_transform = []
+        #Get notifications        
 
         while not self.create_queue.empty():
-            data_to_transform.append(json.loads(self.create_queue.get().decode('UTF-8')))
-                        
-        return data_to_transform
+            notification = json.loads(self.create_queue.get().decode('UTF-8'))
+            self.transformation([notification])
+        
         
     #Define transformation data process
     def transformation(self,data):
@@ -149,7 +148,7 @@ class SDA():
         else:
             json_data = None
 
-        return json_data  
+        self.load(json_data)  
 
 
        
@@ -283,9 +282,9 @@ class SDA():
     #Define SDA Monitor.
     def sda_monitor(self):
         #start_time = time.time()
-        data = self.extract_data()        
-        data = self.transformation(data)
-        self.load(data)
+        self.extract_data()        
+        #data = self.transformation(data)
+        #self.load(data)
         #end_time = time.time()
         #print("---%s seconds ---" % (end_time-start_time))
 
@@ -293,7 +292,7 @@ class SDA():
 #Main Task
 @app.command()
 def main(interval: int = 5):
-    adapter = SDA(interval=interval)
+    adapter = SDA(interval=interval, amqp_host='192.168.1.105')
     adapter.init_SDA_loop()
 
 if __name__ == '__main__':
